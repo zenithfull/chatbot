@@ -30,12 +30,12 @@ const GPT_THREAD_MAX_COUNT = process.env.GPT_THREAD_MAX_COUNT;
  * @param {object} context Azure Functions のcontext
  */
 const postMessage = async (channel, text, threadTs, context) => {
+  // context.log(text);
   await slackClient.chat.postMessage({
     channel: channel,
     text: text,
     thread_ts: threadTs,
   });
-  context.log(text);
 };
 
 /**
@@ -74,7 +74,7 @@ module.exports = async function (context, req) {
 
   // Response slack challenge requests
   const body = eval(req.body);
-  if (body.challenge) {
+  if (body?.challenge) {
     context.log('Challenge: ' + body.challenge);
     context.res = {
       body: body.challenge,
@@ -82,10 +82,10 @@ module.exports = async function (context, req) {
     return;
   }
 
-  context.log(req.body);
+  // context.log(req.body);
   const event = body.event;
   const threadTs = event?.thread_ts ?? event?.ts;
-  if (event?.type === 'app_mention') {
+  if (event?.type === 'message') {
     try {
       const threadMessagesResponse = await slackClient.conversations.replies({
         channel: event.channel,
@@ -100,6 +100,8 @@ module.exports = async function (context, req) {
         );
         return;
       }
+      // context.log('threadMessagesResponse');
+      // context.log(threadMessagesResponse);
       const botMessages = threadMessagesResponse.messages
         .sort((a, b) => Number(a.ts) - Number(b.ts))
         .filter(
@@ -123,26 +125,30 @@ module.exports = async function (context, req) {
         );
         return;
       }
-      context.log(botMessages);
-      var postMessages = [
-        {
-          role: ChatCompletionRequestMessageRoleEnum.System,
-          content: CHAT_GPT_SYSTEM_PROMPT,
-        },
-        ...botMessages,
-      ];
-      const openaiResponse = await createCompletion(postMessages, context);
-      if (openaiResponse == null || openaiResponse == '') {
-        await postMessage(
-          event.channel,
-          '[Bot]ChatGPTから返信がありませんでした。この症状は、ChatGPTのサーバーの調子が悪い時に起こります。少し待って再度試してみて下さい。',
-          threadTs,
-          context
-        );
-        return { statusCode: 200 };
+      // context.log('botMessages');
+      // context.log(botMessages[botMessages.length - 1].role);
+      const lastMessage = botMessages[botMessages.length - 1];
+      if (lastMessage.role == ChatCompletionRequestMessageRoleEnum.User) {
+        var postMessages = [
+          {
+            role: ChatCompletionRequestMessageRoleEnum.System,
+            content: CHAT_GPT_SYSTEM_PROMPT,
+          },
+          ...botMessages,
+        ];
+        const openaiResponse = await createCompletion(postMessages, context);
+        if (openaiResponse == null || openaiResponse == '') {
+          await postMessage(
+            event.channel,
+            '[Bot]ChatGPTから返信がありませんでした。この症状は、ChatGPTのサーバーの調子が悪い時に起こります。少し待って再度試してみて下さい。',
+            threadTs,
+            context
+          );
+          return { statusCode: 200 };
+        }
+        await postMessage(event.channel, openaiResponse, threadTs, context);
+        context.log('ChatGPTBot function post message successfully.');
       }
-      await postMessage(event.channel, openaiResponse, threadTs, context);
-      context.log('ChatGPTBot function post message successfully.');
       return { statusCode: 200 };
     } catch (error) {
       context.log(
